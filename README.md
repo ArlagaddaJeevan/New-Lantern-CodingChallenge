@@ -34,7 +34,7 @@ is not bundled into the Docker image.
 
 ## Deploy
 
-`render.yaml` for Render (primary), `fly.toml` for Fly.io. Both build from the
+`render.yaml` for Render. Both build from the
 same `Dockerfile`. Health check on `/healthz`.
 
 ## Numbers (public split, 5-fold GroupKFold on case_id)
