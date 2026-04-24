@@ -36,15 +36,24 @@ def main():
             "schema_version": 1,
             "cases": cases_batch,
         }).encode()
-        req = urllib.request.Request(
-            args.url, data=body,
-            headers={"content-type": "application/json"},
-            method="POST",
-        )
-        t0 = time.time()
-        with urllib.request.urlopen(req, timeout=360) as r:
-            data = json.loads(r.read())
-        return data["predictions"], time.time() - t0
+        last_err = None
+        for attempt in range(3):
+            req = urllib.request.Request(
+                args.url, data=body,
+                headers={"content-type": "application/json"},
+                method="POST",
+            )
+            t0 = time.time()
+            try:
+                with urllib.request.urlopen(req, timeout=360) as r:
+                    data = json.loads(r.read())
+                return data["predictions"], time.time() - t0
+            except Exception as e:
+                last_err = e
+                wait = 2 + 3 * attempt
+                print(f"  attempt {attempt+1} failed: {e} - retrying in {wait}s")
+                time.sleep(wait)
+        raise last_err
 
     all_preds: list[dict] = []
     total = 0.0
