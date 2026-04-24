@@ -1,8 +1,3 @@
-"""Inference wrapper. Loads the LightGBM bundle once at startup and scores
-whole cases (current study + all priors) in one vectorized pass so that the
-per-request latency stays in the tens of milliseconds even when the evaluator
-ships hundreds of priors per case.
-"""
 from __future__ import annotations
 
 import logging
@@ -30,8 +25,7 @@ class Predictor:
             for k in ("trained_rows", "trained_cases", "oof_accuracy",
                      "oof_auc", "rules_accuracy", "logreg_accuracy")
         }
-        # Cache per (normalized current desc, normalized prior desc, days_delta).
-        # Saves recomputation across retries and repeated study pairs.
+        # cache on (norm_current, norm_prior, days) so retries are free
         self._cache: dict[tuple[str, str, int], float] = {}
         self._cache_lock = Lock()
         self._extractor = FeatureExtractor()
@@ -41,20 +35,13 @@ class Predictor:
         LOG.info("predictor loaded: threshold=%.3f meta=%s",
                  self.threshold, self.meta)
 
-    def predict_case(
-        self, current_dict: dict, priors: list[dict]
-    ) -> list[bool]:
-        """Score one case. `current_dict` and each prior dict use the same keys
-        as the request schema. Returns a list[bool] in prior order."""
+    def predict_case(self, current_dict: dict, priors: list[dict]) -> list[bool]:
         if not priors:
             return []
         cur = Study.from_dict(current_dict)
         pri_studies = [Study.from_dict(p) for p in priors]
 
-        # Cache keys: only the triple that actually feeds the model's signal
-        # (normalized text + integer days). Skip cache for items missing a
-        # normalized current description.
-        out = [None] * len(pri_studies)
+        out: list[bool | None] = [None] * len(pri_studies)
         to_score_idx: list[int] = []
         for i, p in enumerate(pri_studies):
             days = 0
@@ -72,8 +59,6 @@ class Predictor:
             X = self._extractor.featurize_case(cur, pri_studies)
             proba = self.booster.predict(X)
             for i, prob in enumerate(proba):
-                # write everyone to cache (even cache hits got re-scored only
-                # if the index was in to_score_idx); safe cheap overwrite
                 p = pri_studies[i]
                 days = 0
                 if cur.date_parsed and p.date_parsed:

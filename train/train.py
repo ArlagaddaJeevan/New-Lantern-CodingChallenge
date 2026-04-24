@@ -1,10 +1,4 @@
-"""Train and serialize the relevance classifier.
-
-Run:  python train/train.py
-
-Output:  models/bundle.joblib  (holds TF-IDF vectorizers + LightGBM booster
-                                + chosen decision threshold).
-"""
+# python train/train.py  ->  models/bundle.joblib
 from __future__ import annotations
 
 import json
@@ -25,12 +19,8 @@ from app.features import FEATURE_NAMES, FeatureExtractor, Study  # noqa: E402
 DATA = ROOT / "data" / "relevant_priors_public.json"
 OUT = ROOT / "models" / "bundle.joblib"
 
-# --------------------------------------------------------------------------- #
-# Data loading
-# --------------------------------------------------------------------------- #
 
-
-def load_public() -> tuple[list[dict], dict[tuple[str, str], bool]]:
+def load_public():
     with DATA.open(encoding="utf-8") as f:
         payload = json.load(f)
     cases = payload["cases"]
@@ -58,15 +48,8 @@ def build_xy(cases, labels, extractor: FeatureExtractor):
     return np.vstack(X_blocks), np.asarray(y), np.asarray(groups), meta
 
 
-# --------------------------------------------------------------------------- #
-# Baselines / evaluation
-# --------------------------------------------------------------------------- #
-
-
 def rules_predict(X: np.ndarray) -> np.ndarray:
-    """Simple rule: positive iff exact match OR (modality match AND anatomy match
-    AND within 5 years). Uses feature indexes so the model-free baseline stays
-    aligned with the numeric columns in app.features.FEATURE_NAMES."""
+    # exact-match OR (same modality AND same anatomy AND within 5 years)
     exact = X[:, FEATURE_NAMES.index("exact_match")]
     mm = X[:, FEATURE_NAMES.index("mod_match")]
     am = X[:, FEATURE_NAMES.index("anat_match")]
@@ -74,8 +57,7 @@ def rules_predict(X: np.ndarray) -> np.ndarray:
     return ((exact > 0) | ((mm > 0) & (am > 0) & (w5 > 0))).astype(int)
 
 
-def best_threshold(y_true: np.ndarray, proba: np.ndarray) -> tuple[float, float]:
-    """Grid-search threshold on accuracy."""
+def best_threshold(y_true, proba):
     grid = np.linspace(0.1, 0.9, 81)
     best_t, best_acc = 0.5, 0.0
     for t in grid:
@@ -83,11 +65,6 @@ def best_threshold(y_true: np.ndarray, proba: np.ndarray) -> tuple[float, float]
         if acc > best_acc:
             best_acc, best_t = acc, float(t)
     return best_t, best_acc
-
-
-# --------------------------------------------------------------------------- #
-# Main
-# --------------------------------------------------------------------------- #
 
 
 def main():
@@ -99,7 +76,6 @@ def main():
     print(f"[load] cases={len(cases):,}  labels={len(labels):,}  "
           f"t={time.time()-t0:.1f}s")
 
-    # Fit text vectorizers on ALL descriptions (current + priors).
     all_desc = []
     for c in cases:
         all_desc.append(c["current_study"]["study_description"])
@@ -114,23 +90,20 @@ def main():
     print(f"[features] X={X.shape}  pos_rate={y.mean():.3f}  "
           f"t={time.time()-t0:.1f}s")
 
-    # --- Baseline 1: rules --------------------------------------------------
     rule_pred = rules_predict(X)
     rule_acc = accuracy_score(y, rule_pred)
-    print(f"[baseline:rules] acc={rule_acc:.4f}")
+    print(f"[rules] acc={rule_acc:.4f}")
 
-    # --- Baseline 2: logistic regression (5-fold grouped CV) ---------------
     gkf = GroupKFold(n_splits=5)
     lr_oof = np.zeros(len(y), dtype=float)
     for fold, (tr, va) in enumerate(gkf.split(X, y, groups)):
-        lr = LogisticRegression(max_iter=2000, C=1.0, n_jobs=-1)
+        lr = LogisticRegression(max_iter=2000, C=1.0)
         lr.fit(X[tr], y[tr])
         lr_oof[va] = lr.predict_proba(X[va])[:, 1]
     lr_thr, lr_acc = best_threshold(y, lr_oof)
-    print(f"[baseline:logreg] auc={roc_auc_score(y, lr_oof):.4f}  "
-          f"best_thr={lr_thr:.2f}  acc={lr_acc:.4f}")
+    print(f"[logreg] auc={roc_auc_score(y, lr_oof):.4f}  "
+          f"thr={lr_thr:.2f}  acc={lr_acc:.4f}")
 
-    # --- LightGBM grouped CV (accuracy + tune threshold) -------------------
     lgb_params = dict(
         objective="binary",
         learning_rate=0.05,
@@ -158,16 +131,15 @@ def main():
         print(f"  fold{fold} best_iter={booster.best_iteration}  val_acc@0.5={acc_f:.4f}")
 
     lgb_thr, lgb_acc = best_threshold(y, lgb_oof)
-    print(f"[lightgbm:oof] auc={roc_auc_score(y, lgb_oof):.4f}  "
-          f"best_thr={lgb_thr:.2f}  acc={lgb_acc:.4f}  "
+    print(f"[lgbm] auc={roc_auc_score(y, lgb_oof):.4f}  "
+          f"thr={lgb_thr:.2f}  acc={lgb_acc:.4f}  "
           f"mean_iter={int(np.mean(best_iters))}")
 
-    # --- Refit on ALL data with mean best_iteration ------------------------
+    # refit on all labeled data, slightly more rounds
     final_iters = int(np.mean(best_iters) * 1.1)
     dall = lgb.Dataset(X, label=y, feature_name=FEATURE_NAMES)
     final_booster = lgb.train(lgb_params, dall, num_boost_round=final_iters)
 
-    # Save bundle
     OUT.parent.mkdir(exist_ok=True, parents=True)
     joblib.dump({
         "char_vec": extractor.char_vec,
@@ -182,17 +154,16 @@ def main():
         "rules_accuracy": float(rule_acc),
         "logreg_accuracy": float(lr_acc),
     }, OUT)
-    print(f"[save] -> {OUT}   total_t={time.time()-t0:.1f}s")
+    print(f"[save] -> {OUT}  total={time.time()-t0:.1f}s")
 
-    # --- Feature importance print (quick sanity) ---------------------------
     try:
         imp = final_booster.feature_importance(importance_type="gain")
         top = sorted(zip(FEATURE_NAMES, imp), key=lambda x: -x[1])[:15]
-        print("\n[top-15 features by gain]")
+        print("\ntop 15 features by gain:")
         for n, g in top:
             print(f"  {n:<25} {g:,.0f}")
-    except Exception as e:  # pragma: no cover
-        print(f"[warn] could not print importance: {e}")
+    except Exception as e:
+        print(f"(could not print importance: {e})")
 
 
 if __name__ == "__main__":

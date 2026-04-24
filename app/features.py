@@ -1,10 +1,4 @@
-"""Feature extraction shared between training and inference.
-
-The extractor is stateful only for the two TF-IDF vectorizers (character n-grams
-and word n-grams over normalized study descriptions). Everything else is
-deterministic text parsing with regex / keyword buckets, so the same module
-produces identical features at train and serve time.
-"""
+"""Feature extraction. Same code path at train and serve time."""
 from __future__ import annotations
 
 import re
@@ -17,13 +11,10 @@ from scipy import sparse
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 
-# --- normalization -----------------------------------------------------------
-
 _PUNCT_RE = re.compile(r"[^a-z0-9/\s]+")
 _WS_RE = re.compile(r"\s+")
 
-# Curated synonym expansion so that "MAMMO", "MAMMOGRAPHY", "MAM" all collapse.
-# Keys are matched as whole words (case-insensitive after lower()).
+# common abbreviations -> expanded form, collapsed before TF-IDF
 _SYNONYMS: dict[str, str] = {
     "mammo": "mam",
     "mammogram": "mam",
@@ -87,18 +78,14 @@ _SYNONYMS: dict[str, str] = {
 
 
 def normalize_desc(desc: str) -> str:
-    """Lowercase, strip punctuation, expand common medical-imaging synonyms."""
     if not desc:
         return ""
     s = desc.lower()
     s = _PUNCT_RE.sub(" ", s)
     s = _WS_RE.sub(" ", s).strip()
     tokens = [_SYNONYMS.get(t, t) for t in s.split()]
-    # re-tokenize after synonym expansion (some expansions contain whitespace)
     return " ".join(" ".join(tokens).split())
 
-
-# --- modality / anatomy / laterality / contrast -----------------------------
 
 _MODALITY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("MAM", re.compile(r"\bmam\b")),
@@ -175,8 +162,6 @@ def extract_contrast(norm_desc: str) -> str:
     return "NONE"
 
 
-# --- study struct ------------------------------------------------------------
-
 @dataclass
 class Study:
     study_id: str
@@ -209,8 +194,6 @@ class Study:
             date_parsed=dt,
         )
 
-
-# --- stateful extractor ------------------------------------------------------
 
 MODALITY_VOCAB = ["MR", "CT", "XR", "US", "MAM", "NM", "ECHO", "PETCT", "DXA", "FL", "IR", "OTHER", "MRI"]
 ANATOMY_VOCAB = ["HEAD", "FACE", "NECK", "CSPINE", "TSPINE", "LSPINE", "SPINE", "CHEST", "HEART",
@@ -266,8 +249,6 @@ def _onehot(value: str, vocab: list[str]) -> list[int]:
 
 
 class FeatureExtractor:
-    """Owns the fitted TF-IDF vectorizers. Stateless parsing is module-level."""
-
     def __init__(self, char_ngram=(3, 5), word_ngram=(1, 2),
                  char_max_features=30_000, word_max_features=10_000):
         self.char_vec = TfidfVectorizer(
@@ -296,7 +277,6 @@ class FeatureExtractor:
         return num / denom if denom > 0 else 0.0
 
     def featurize_case(self, current: Study, priors: list[Study]) -> np.ndarray:
-        """Return a (len(priors), n_features) float32 matrix for one case."""
         if not priors:
             return np.zeros((0, len(FEATURE_NAMES)), dtype=np.float32)
 
@@ -308,7 +288,7 @@ class FeatureExtractor:
         cur_len = len(current.norm)
         n_priors = len(priors)
 
-        # recency rank: 0 = oldest, n-1 = most recent (by date_parsed).
+        # 0 = oldest, n-1 = most recent
         priors_sorted = sorted(
             range(n_priors),
             key=lambda i: priors[i].date_parsed or date.min,

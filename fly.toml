@@ -1,9 +1,3 @@
-# Fly.io fallback deploy. Run:
-#   fly launch --no-deploy --copy-config --name relevant-priors
-#   fly deploy
-#
-# The machine has enough memory for LightGBM + sklearn without tuning.
-
 app = "relevant-priors"
 primary_region = "iad"
 

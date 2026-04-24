@@ -1,6 +1,4 @@
-"""Run the deployed predictor end-to-end against the full public split and
-report accuracy. Simulates the evaluator by POSTing a single batch that
-contains every case in the public JSON."""
+# hit the running /predict endpoint with all public cases and score the result
 from __future__ import annotations
 
 import argparse
@@ -68,7 +66,7 @@ def main():
         got_keys.add(key)
         y = truth.get(key)
         if y is None:
-            continue  # prediction for unknown prior — will not help or hurt
+            continue
         if bool(p["predicted_is_relevant"]) == y:
             correct += 1
         else:
