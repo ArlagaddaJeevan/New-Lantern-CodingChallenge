@@ -1,4 +1,3 @@
-"""FastAPI app exposing POST /predict per the challenge contract."""
 from __future__ import annotations
 
 import logging
@@ -63,8 +62,6 @@ def predict(req: PredictRequest, request: Request):
 
     predictions: list[Prediction] = []
     for c in req.cases:
-        # model_dump keeps string keys/values exactly as they came in so our
-        # feature extractor sees the raw user input, not a coerced version.
         flags = _predictor.predict_case(
             c.current_study.model_dump(),
             [p.model_dump() for p in c.prior_studies],

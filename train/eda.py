@@ -1,4 +1,4 @@
-"""Quick EDA to understand the public data structure and label distribution."""
+# poke around the public split: label balance, priors/case, common tokens
 import json
 from collections import Counter
 from datetime import date

@@ -1,4 +1,3 @@
-"""Pydantic request/response schemas matching the challenge contract exactly."""
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field

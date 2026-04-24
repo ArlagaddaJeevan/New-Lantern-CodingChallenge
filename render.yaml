@@ -1,11 +1,8 @@
-# Render deployment manifest. Push this repo to GitHub, then in the Render
-# dashboard click "New -> Blueprint" and point it at the repo — Render will
-# pick this file up and build the Docker image.
 services:
   - type: web
     name: relevant-priors
     runtime: docker
-    plan: starter          # 512 MB RAM is plenty; free plan spins down after idle
+    plan: starter
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
     envVars:

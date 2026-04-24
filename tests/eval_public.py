@@ -1,6 +1,4 @@
-"""Run the deployed predictor end-to-end against the full public split and
-report accuracy. Simulates the evaluator by POSTing a single batch that
-contains every case in the public JSON."""
+# hit the running /predict endpoint with all public cases and score the result
 from __future__ import annotations
 
 import argparse
@@ -38,15 +36,24 @@ def main():
             "schema_version": 1,
             "cases": cases_batch,
         }).encode()
-        req = urllib.request.Request(
-            args.url, data=body,
-            headers={"content-type": "application/json"},
-            method="POST",
-        )
-        t0 = time.time()
-        with urllib.request.urlopen(req, timeout=360) as r:
-            data = json.loads(r.read())
-        return data["predictions"], time.time() - t0
+        last_err = None
+        for attempt in range(3):
+            req = urllib.request.Request(
+                args.url, data=body,
+                headers={"content-type": "application/json"},
+                method="POST",
+            )
+            t0 = time.time()
+            try:
+                with urllib.request.urlopen(req, timeout=360) as r:
+                    data = json.loads(r.read())
+                return data["predictions"], time.time() - t0
+            except Exception as e:
+                last_err = e
+                wait = 2 + 3 * attempt
+                print(f"  attempt {attempt+1} failed: {e} - retrying in {wait}s")
+                time.sleep(wait)
+        raise last_err
 
     all_preds: list[dict] = []
     total = 0.0
@@ -68,7 +75,7 @@ def main():
         got_keys.add(key)
         y = truth.get(key)
         if y is None:
-            continue  # prediction for unknown prior — will not help or hurt
+            continue
         if bool(p["predicted_is_relevant"]) == y:
             correct += 1
         else:
