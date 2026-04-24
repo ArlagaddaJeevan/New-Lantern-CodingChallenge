@@ -1,0 +1,11 @@
+data/
+tests/
+train/
+**/__pycache__/
+*.pyc
+.git/
+.venv/
+venv/
+dist/
+build/
+*.zip
